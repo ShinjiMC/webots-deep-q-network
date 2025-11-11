@@ -1,0 +1,32 @@
+# Archivos temporales
+*.bak
+*.tmp
+*.log
+
+# Archivos de compilación
+*.o
+*.exe
+*.out
+*.wbproj
+*.bak
+*.tmp
+*.wbo
+
+# Cache de Webots
+*.wbo
+*.wrl
+build/
+controllers/**/build/
+controllers/**/cmake-build*/
+
+# Configs locales
+*.user
+*.pro.user
+*.DS_Store
+
+.vscode
+*.txt
+*.pdf
+*.h5
+__pycache__/
+*.npy

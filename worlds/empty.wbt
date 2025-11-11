@@ -1,0 +1,103 @@
+#VRML_SIM R2020b utf8
+WorldInfo {
+  coordinateSystem "NUE"
+}
+Viewpoint {
+  orientation 0.9832949983096428 -0.16342963089387635 -0.08013552299156139 5.3982108608869215
+  position 0.21573734214517087 1.4454745317904645 1.1791835753510815
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RectangleArena {
+  floorAppearance Appearance {
+    material Material {
+      diffuseColor 0.1 0.1 0.1
+    }
+  }
+  wallThickness 0.05
+}
+Solid {
+  translation -9.603774326634961e-19 0.09607073102046562 8.867707728039088e-19
+  rotation 4.677822524838727e-14 1 1.9825057367173655e-13 -6.916812874772554e-19
+  children [
+    Shape {
+      geometry Box {
+        size 0.1 0.2 0.5
+      }
+    }
+  ]
+  name "solid(1)"
+  boundingObject Box {
+    size 0.1 0.2 0.5
+  }
+  physics Physics {
+  }
+  linearVelocity 1.047503185873005e-17 4.222116795412639e-05 1.0897384377554749e-17
+  angularVelocity -1.1760707350511998e-16 -8.32976563240264e-17 1.7053025658242356e-16
+}
+E-puck {
+  hidden position_0_0 -3.095608027225684e-08
+  hidden position_0_1 3.09561460291719e-08
+  hidden linearVelocity_0 8.690058724959007e-10 -3.747426167895358e-07 1.2696731307057985e-08
+  hidden angularVelocity_0 8.464656680794925e-07 2.3144924064988483e-07 -5.769319842544742e-08
+  hidden rotation_1 1 0 0 2.9802322387695313e-08
+  hidden linearVelocity_1 -4.9841037454546294e-09 -3.438369296393931e-07 1.6789974089747642e-08
+  hidden angularVelocity_1 8.469527265775179e-07 2.3145113264086013e-07 2.521697469336875e-07
+  hidden rotation_2 -1 0 0 2.9802322387695313e-08
+  hidden linearVelocity_2 7.2991271298635136e-09 -3.874448241791754e-07 1.706872813606901e-08
+  hidden angularVelocity_2 8.45978591503011e-07 2.3144736398916422e-07 -3.675574334684064e-07
+  translation -0.390016000000078 -6.392029431066294e-05 -0.4000000001666259
+  rotation 3.0310412197801563e-06 0.9999999999908058 -3.03334351790187e-06 -1.5699999963972666
+  controller "dqn"
+  supervisor TRUE
+  groundSensorsSlot [
+    DistanceSensor {
+      translation -0.02 -0.01 -0.005
+      name "gs2"
+      type "infra-red"
+    }
+    DistanceSensor {
+      translation -0.02 0.01 -0.005
+      name "gs1"
+      type "infra-red"
+    }
+    DistanceSensor {
+      translation -0.02 0 -0.005
+      name "gs0"
+      type "infra-red"
+    }
+  ]
+}
+DEF start Solid {
+  translation -0.4 0 -0.4
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.3 0.5 0.7
+        }
+      }
+      geometry Box {
+        size 0.2 0.001 0.2
+      }
+    }
+  ]
+}
+DEF end Solid {
+  translation 0.4 0 0.4
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.8 0.7 0
+        }
+      }
+      geometry Box {
+        size 0.2 0.001 0.2
+      }
+    }
+  ]
+  name "end"
+}
