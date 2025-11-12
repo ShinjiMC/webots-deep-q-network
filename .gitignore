@@ -30,3 +30,5 @@ controllers/**/cmake-build*/
 *.h5
 __pycache__/
 *.npy
+*.pkl
+*.zip
