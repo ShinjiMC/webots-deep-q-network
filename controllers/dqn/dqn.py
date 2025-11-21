@@ -27,25 +27,24 @@ if os.path.exists(BEST_METRICS_FILE):
     print("Cargando métricas del mejor modelo...")
     metrics = np.load(BEST_METRICS_FILE)
     if len(metrics) == 3:
-        BEST_STEPS = metrics[0]
+        BEST_TIME = metrics[0]
         BEST_REWARD = metrics[1]
         BEST_AVG_LOSS = metrics[2]
     elif len(metrics) == 2:
         print("Detectado archivo de métricas antiguo (2 valores). Actualizando a 3.")
-        BEST_STEPS = np.inf
+        BEST_TIME = np.inf
         BEST_REWARD = metrics[0]
         BEST_AVG_LOSS = metrics[1]
     else:
         print("Error: Archivo de métricas corrupto. Empezando de cero.")
-        BEST_STEPS = np.inf
+        BEST_TIME = np.inf
         BEST_REWARD = -np.inf
         BEST_AVG_LOSS = np.inf
-    print(f"Mejores Pasos cargados: {BEST_STEPS}")
+    print(f"Mejor Tiempo cargado: {BEST_TIME:.2f} segundos")
     print(f"Mejor Recompensa cargada: {BEST_REWARD:.2f}")
-    print(f"Mejor Loss cargada: {BEST_AVG_LOSS:.6f}")
 else:
     print("No se encontraron métricas. Empezando 'Mejor Modelo' de cero.")
-    BEST_STEPS = np.inf
+    BEST_TIME = np.inf
     BEST_REWARD = -np.inf
     BEST_AVG_LOSS = np.inf
 
@@ -96,61 +95,48 @@ while supervisor.step(TIME_STEP) != -1:
         duration_sec = end_time - start_time
         minutes, seconds = divmod(int(duration_sec), 60)
         duration_formatted = f"{minutes:02d}:{seconds:02d}"
+        reason = "Meta" if done else "Fracaso"
         try:
-            reason = "Meta" if done else "Fracaso"
             current_epsilon = agent.epsilon
             log_line = f"{current_epsilon:.4f} | {step_counter} | {reason} | {total_reward:.2f}\n"
             with open(LOG_FILE, "a") as f:
                 f.write(log_line)
-        except Exception as e:
-            print(f"Error al escribir en el log: {e}")
-        try:
             avg_loss = np.mean(episode_losses) if episode_losses else 0
-            if np.isnan(avg_loss):
-                avg_loss_str = "nan"
-            else:
-                avg_loss_str = f"{avg_loss:.6f}"
+            if np.isnan(avg_loss): avg_loss = np.inf
+            avg_loss_str = "nan" if avg_loss == np.inf else f"{avg_loss:.6f}"
+            
             metrics_line = f"{avg_loss_str} | {total_reward:.2f} | {duration_formatted}\n"
             with open(METRICS_LOG_FILE, "a") as f:
                 f.write(metrics_line)
         except Exception as e:
-            print(f"Error al escribir en el log de métricas: {e}")
+            print(f"Error escribiendo logs: {e}")
+            
         if done:
             print(f"¡META ALCANZADA! Pasos: {step_counter}, Recompensa Final: {total_reward:.2f}")
         else:
             print(f"¡TIEMPO LÍMITE! Pasos: {step_counter}, Recompensa Final: {total_reward:.2f}")
         agent.decay_epsilon()
         agent.save_state()
-        if np.isnan(avg_loss):
-            avg_loss = np.inf
-        if (reason == "Meta" and 
-            (step_counter < BEST_STEPS or
-             (step_counter == BEST_STEPS and total_reward > BEST_REWARD) or
-             (step_counter == BEST_STEPS and total_reward == BEST_REWARD and avg_loss < BEST_AVG_LOSS))):
-            print("\n--- ¡NUEVO MEJOR MODELO ENCONTRADO! ---")
-            print(f"Pasos: {step_counter} (Récord anterior: {BEST_STEPS})")
-            print(f"Recompensa: {total_reward:.2f} (Récord anterior: {BEST_REWARD:.2f})")
-            print(f"Loss: {avg_loss:.6f} (Récord anterior: {BEST_AVG_LOSS:.6f})")
-            BEST_STEPS = step_counter
-            BEST_REWARD = total_reward
-            BEST_AVG_LOSS = avg_loss
+        if reason == "Meta" and duration_sec < BEST_TIME:
+            print("\n--- ¡NUEVO RÉCORD DE VELOCIDAD! ---")
+            print(f"Tiempo: {duration_sec:.2f}s (Récord anterior: {BEST_TIME:.2f}s)")
+            
+            BEST_TIME = duration_sec
+            BEST_REWARD = total_reward  
+            BEST_AVG_LOSS = avg_loss    
+            
             agent.model.save_weights(BEST_MODEL_FILE)
             print(f"Mejor modelo guardado en: {BEST_MODEL_FILE}")
-            metrics_to_save = np.array([BEST_STEPS, BEST_REWARD, BEST_AVG_LOSS])
+            metrics_to_save = np.array([BEST_TIME, BEST_REWARD, BEST_AVG_LOSS])
             np.save(BEST_METRICS_FILE, metrics_to_save)
-            print("Métricas del mejor modelo guardadas.\n")
+            print("Métricas actualizadas.\n")
         else:
-            print("Info: No es un nuevo 'Mejor Modelo'.")
+            print("Info: No es un nuevo récord.")
             if reason != "Meta":
-                print("  (Razón: No se alcanzó la meta)")
-            elif step_counter > BEST_STEPS:
-                 print(f"  (Razón: Pasos {step_counter} no superó {BEST_STEPS})")
-            elif step_counter == BEST_STEPS and total_reward < BEST_REWARD:
-                 print(f"  (Razón: Empate de pasos, pero Recompensa {total_reward:.2f} no superó {BEST_REWARD:.2f})")
-            elif step_counter == BEST_STEPS and total_reward == BEST_REWARD and avg_loss >= BEST_AVG_LOSS:
-                 print(f"  (Razón: Empate de pasos y recompensa, pero Loss {avg_loss:.6f} no fue menor que {BEST_AVG_LOSS:.6f})")
-            else:
-                 print("  (Razón: Criterios no superaron el récord actual.)")
+                print("  (Razón: No llegó a la meta)")
+            elif duration_sec >= BEST_TIME:
+                print(f"  (Razón: Tiempo {duration_sec:.2f}s no supera el récord de {BEST_TIME:.2f}s)")
+        
         if agent.epsilon <= agent.epsilon_min:
             print("--- ENTRENAMIENTO COMPLETADO (Epsilon Mínimo alcanzado) ---")
             print("Cerrando controlador.")

@@ -8,6 +8,17 @@ import pickle
 import random
 import os
 
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"GPU Detectada y configurada: {len(gpus)}")
+    except RuntimeError as e:
+        print(e)
+else:
+    print("!!!! No se detectó GPU. Se usará la CPU (esto es normal si no tienes CUDA instalado).")
+
 def build_model(input_dim, output_dim):
     """
     Crea la red neuronal que predice los valores Q.
@@ -43,7 +54,7 @@ class DQNAgent:
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
-        self.batch_size = 32
+        self.batch_size = 8
         self.buffer = ReplayBuffer()
         self.model = build_model(state_dim, action_dim)
         self.target_model = build_model(state_dim, action_dim)
