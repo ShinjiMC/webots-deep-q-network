@@ -13,24 +13,35 @@ if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"GPU Detectada y configurada: {len(gpus)}")
+
+        print(f"\n=== GPU(s) Detectadas: {len(gpus)} ===")
+
+        logical_gpus = tf.config.list_logical_devices('GPU')
+
+        for i, gpu in enumerate(logical_gpus):
+            print(f"\n--- GPU {i} ---")
+            print(f"Nombre         : {gpu.name}")
+            print(f"Dispositivo    : {gpu.device_type}")
+        for i, gpu in enumerate(gpus):
+            details = tf.config.experimental.get_device_details(gpu)
+            print("\nDetalles del dispositivo físico:")
+            for key, value in details.items():
+                print(f"  {key}: {value}")
+        print("\n==============================\n")
     except RuntimeError as e:
         print(e)
 else:
-    print("!!!! No se detectó GPU. Se usará la CPU (esto es normal si no tienes CUDA instalado).")
+    print("!!!! No se detectó GPU. Se usará la CPU.")
+
 
 def build_model(input_dim, output_dim):
-    """
-    Crea la red neuronal que predice los valores Q.
-    Entrada: 8 (sensores)
-    Salida: 3 (Q-valor para cada acción: Avanzar, Izquierda, Derecha)
-    """
     model = keras.Sequential([
-        layers.Dense(64, activation='relu', input_shape=(input_dim,)),
-        layers.Dense(32, activation='relu'),
+        layers.Dense(512, activation='relu', input_shape=(input_dim,)),
+        layers.Dense(512, activation='relu'),
+        layers.Dense(256, activation='relu'),  
         layers.Dense(output_dim, activation='linear')
     ])
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipvalue=1.0), loss='huber')
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.00025, clipvalue=1.0), loss='huber')
     return model
 
 class ReplayBuffer:
@@ -46,6 +57,18 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+@tf.function
+def train_step(model, states, targets, actions):
+    with tf.GradientTape() as tape:
+        q_values = model(states, training=True)
+        indices = tf.stack([tf.range(tf.shape(actions)[0]), actions], axis=1)
+        chosen_q = tf.gather_nd(q_values, indices)
+        loss = tf.keras.losses.Huber()(targets, chosen_q)
+    
+    grads = tape.gradient(loss, model.trainable_variables)
+    model.optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    return loss
+
 class DQNAgent:
     def __init__(self, state_dim, action_dim):
         self.state_dim = state_dim
@@ -54,7 +77,7 @@ class DQNAgent:
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
-        self.batch_size = 8
+        self.batch_size = 256
         self.buffer = ReplayBuffer()
         self.model = build_model(state_dim, action_dim)
         self.target_model = build_model(state_dim, action_dim)
@@ -81,24 +104,20 @@ class DQNAgent:
             return None
         batch = self.buffer.sample(self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
-        states = np.array(states)
-        actions = np.array(actions)
-        rewards = np.array(rewards)
-        next_states = np.array(next_states)
-        dones = np.array(dones)
-
-        q_next = self.target_model.predict(next_states, verbose=0)
-        q_next_max = np.max(q_next, axis=1)
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        next_states = tf.convert_to_tensor(next_states, dtype=tf.float32)
+        rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
+        actions = tf.convert_to_tensor(actions, dtype=tf.int32)
+        dones = tf.convert_to_tensor(dones, dtype=tf.float32)
         
-        targets = rewards + self.gamma * q_next_max * (1 - dones)
-        q_current = self.model.predict(states, verbose=0)
+        q_next = self.target_model(next_states, training=False)
+        q_next_max = tf.reduce_max(q_next, axis=1)
         
-        for i in range(self.batch_size):
-            q_current[i, actions[i]] = targets[i]
+        targets = rewards + self.gamma * q_next_max * (1.0 - dones)
         
-        history = self.model.fit(states, q_current, epochs=1, verbose=0)
-        loss = history.history['loss'][0]
-        return loss
+        loss = train_step(self.model, states, targets, actions)
+        
+        return float(loss)
 
     def decay_epsilon(self):
         if self.epsilon > self.epsilon_min:

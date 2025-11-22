@@ -25,7 +25,7 @@ controllers/**/cmake-build*/
 *.DS_Store
 
 .vscode
-*.txt
+*_*.txt
 *.pdf
 *.h5
 __pycache__/

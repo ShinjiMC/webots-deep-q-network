@@ -1,4 +1,13 @@
 # my_controller.py
+import sys
+import os
+
+webots_path = '/home/shinji/Descargas/webots/lib/controller/python38'
+if os.path.exists(webots_path):
+    sys.path.append(webots_path)
+else:
+    print(f"Error: No encuentro las librerías en {webots_path}")
+
 from controller import Supervisor
 from environment import EPuckEnv
 from agent import DQNAgent

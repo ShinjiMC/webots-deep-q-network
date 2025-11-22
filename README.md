@@ -1,4 +1,4 @@
-# Deep Q Network en Webots
+# Deep Q Network + CUDA
 
 Este proyecto consiste en la simulación de un robot E-puck en el entorno Webots, capaz de navegar un laberinto y encontrar una meta de forma autónoma. Para ello, utiliza Aprendizaje por Refuerzo Profundo (Deep Reinforcement Learning), específicamente el algoritmo Deep Q-Network (DQN).
 
@@ -9,16 +9,76 @@ El robot utiliza sensores infrarrojos de distancia (PS) para detectar obstáculo
 ## Tecnologías Usadas
 
 - [Webots R2020b revision 1](https://cyberbotics.com/#download)
-- Python (API oficial de Webots)
-- Epuck
-- Sensores infrarrojos de distancia
-- Deep Q Network
-- Sensores infrarrojos de distancia (PS) para detección de obstáculos.
-- Sensores de suelo (GS) para detección de meta.
+- Python 3.8
+- TensorFlow 2.10 (con soporte GPU)
+- Epuck (Robot)
+- Sensores infrarrojos de distancia (PS) y de suelo (GS).
 
 ---
 
-## Deep Q Network - Algoritmo
+## Instalación y Configuración (GPU - CUDA)
+
+Para acelerar el entrenamiento utilizando la GPU, es necesario configurar un entorno Conda específico y enlazarlo con Webots mediante el archivo `runtime.ini`.
+
+### 1. Configuración del Entorno Conda
+
+Ejecuta los siguientes comandos en tu terminal para crear el entorno e instalar las dependencias de CUDA y TensorFlow compatibles:
+
+```bash
+conda create -n tf2-gpu python=3.8
+conda activate tf2-gpu
+conda install -c conda-forge cudatoolkit=11.2.2 cudnn=8.1.0
+pip install tensorflow==2.10.*
+pip install protobuf==3.19.6
+```
+
+### 2. Vinculación con Webots (`runtime.ini`)
+
+Webots necesita saber dónde está tu entorno de Python y las librerías de CUDA. Para eso debemos activar el entorno y busca la ruta de tu ejecutable de Python:
+
+```bash
+conda activate tf2-gpu
+which python
+```
+
+![alt text](.docs/which.png)
+(Copia la ruta que te devuelva este comando, por ejemplo: /home/usuario/miniconda3/envs/tf2-gpu/bin/python).
+
+Modifica el archivo `runtime.ini` en la raíz del controlador con el siguiente contenido. Asegúrate de reemplazar las rutas con las que obtuviste en el paso anterior:
+
+```ini
+[environment]
+LD_LIBRARY_PATH=/home/shinji/miniconda3/envs/tf2-gpu/lib:$LD_LIBRARY_PATH
+XLA_FLAGS=--xla_gpu_cuda_data_dir=/home/shinji/miniconda3/envs/tf2-gpu
+TF_TRT_ALLOW_ENGINE_NATIVE_SEGMENT_EXECUTION=1
+TF_NEED_TENSORRT=0
+TF_ENABLE_ONEDNN_OPTS=0
+
+[python]
+COMMAND=/home/shinji/miniconda3/envs/tf2-gpu/bin/python
+```
+
+### 3. Verificación de GPU
+
+- Para ver que tienes instalado correctamente los drivers para ejecutar con anaconda y trabaje con la tarjeta de video usamos el comando:
+
+```bash
+nvidia-smi
+```
+
+![alt text](.docs/nvidia.png)
+
+- Y ejecutamos este para ver si tensorflow se instalo correctamente para que detecte la tarjeta grafica existente:
+
+```bash
+python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+```
+
+![alt text](.docs/tensor.png)
+
+---
+
+## Deep Q Network - Código - Arquitectura
 
 es un algoritmo que fusiona el Aprendizaje por Refuerzo (Q-Learning) con Redes Neuronales Profundas (Deep Learning).
 
@@ -96,14 +156,13 @@ La arquitectura de tu red neuronal se define en la función build_model. Es una 
 
 ### Capas Ocultas (Hidden Layers)
 
-- **Capa Oculta 1**:
-  - 64 neuronas.
-  - **Activación ReLU (Rectified Linear Unit)**: Es una función de activación estándar y eficiente. Si la entrada es negativa, la salida es 0; si es positiva, la salida es la propia entrada.
-- **Capa Oculta 2**:
-  - 32 neuronas.
-  - **Activación ReLU**.
+Capas Ocultas:
 
-Estas capas permiten a la red aprender patrones complejos a partir de las lecturas de los sensores (por ejemplo, "si ps0 y ps1 están altos, pero ps7 está bajo, significa que hay una pared a la izquierda").
+- **Dense 512 (ReLU)**: Gran capacidad para extraer características.
+
+- **Dense 512 (ReLU)**: Capa intermedia para abstracción profunda.
+
+- **Dense 256 (ReLU)**: Condensación de características antes de la decisión.
 
 #### Capa de Salida (Output)
 
@@ -239,7 +298,49 @@ Calcula la recompensa por la acción tomada y determina si el episodio ha termin
 
 ### 2. El Cerebro DQN `agent.py`
 
-Este archivo define al agente de DQN. Contiene la arquitectura de la red neuronal, el buffer de repetición y la lógica de aprendizaje.
+Este archivo define al agente de DQN. Contiene la arquitectura de la red neuronal, el buffer de repetición y la lógica de aprendizaje, la cual ha sido optimizada para ejecutarse eficientemente en GPU (CUDA).
+
+Al inicio del archivo, se incluye un bloque de código que detecta las GPUs disponibles y configura `memory_growth`. Esto es crucial para evitar que TensorFlow reserve toda la VRAM de golpe, permitiendo una gestión más eficiente de los recursos gráficos.
+
+#### Configuración y Detección de GPU
+
+Antes de definir cualquier clase o función, el script ejecuta este bloque de configuración crítica para gestionar cómo TensorFlow interactúa con el hardware.
+
+```python
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
+        print(f"\n=== GPU(s) Detectadas: {len(gpus)} ===")
+
+        logical_gpus = tf.config.list_logical_devices('GPU')
+
+        for i, gpu in enumerate(logical_gpus):
+            print(f"\n--- GPU {i} ---")
+            print(f"Nombre         : {gpu.name}")
+            print(f"Dispositivo    : {gpu.device_type}")
+        for i, gpu in enumerate(gpus):
+            details = tf.config.experimental.get_device_details(gpu)
+            print("\nDetalles del dispositivo físico:")
+            for key, value in details.items():
+                print(f"  {key}: {value}")
+        print("\n==============================\n")
+    except RuntimeError as e:
+        print(e)
+else:
+    print("No se detectó GPU. Se usará la CPU.")
+```
+
+1. **Gestión de Memoria VRAM (`set_memory_growth`)** Por defecto, TensorFlow intenta reservar la totalidad de la memoria de vídeo (VRAM) de la GPU tan pronto como se inicia. Esto suele causar errores de "Out of Memory" (OOM) si el sistema operativo o Webots están usando parte de la tarjeta gráfica.
+
+   - `tf.config.experimental.set_memory_growth(gpu, True)`: Cambia este comportamiento. Indica a TensorFlow que empiece asignando poca memoria y crezca dinámicamente (solicite más memoria) solo a medida que la red neuronal lo necesite. Esto evita bloqueos y conflictos con otras aplicaciones.
+
+2. **Diagnóstico de Hardware**: El bloque incluye impresiones detalladas para confirmar que la configuración de CUDA fue exitosa. Si ves estos mensajes en la consola, significa que los drivers y las librerías `cudatoolkit/cudnn` están correctamente enlazados:
+
+- **Detección**: `tf.config.list_physical_devices('GPU')` lista las tarjetas físicas disponibles.
+- **Detalles**: Imprime el nombre de la tarjeta (ej. "NVIDIA GeForce RTX 3060") y su tipo, confirmando que el entorno `conda` está funcionando.
 
 #### `build_model(input_dim, output_dim)` (Función Helper)
 
@@ -247,20 +348,48 @@ Define la arquitectura de la Red Neuronal Profunda (DQN) usando Keras.
 
 - `input_dim`: Dimensión del estado (8, por los 8 sensores).
 - `output_dim`: Dimensión de la acción (3, por Avanzar, Izquierda, Derecha).
-- `layers.Dense(64, ...)` y `layers.Dense(32, ...)`: Capas ocultas con activación ReLU.
+- `layers.Dense(512, ...)`, `layers.Dense(512, ...)` y `layers.Dense(256, ...)`: Capas ocultas con activación ReLU.
 - `layers.Dense(output_dim, activation='linear')`: Capa de salida. Produce 3 valores Q (uno por acción) sin activación (lineal), ya que los valores Q no están acotados.
-- `model.compile(...)`: Configura el optimizador `Adam` y la función de pérdida `huber`, que es robusta frente a errores grandes.
+- `model.compile(...)`: Configura el optimizador `Adam` y la función de pérdida `huber`, que es robusta frente a errores grandes. Con un `learning_rate` de 0.00025.
 
 ```python
 def build_model(input_dim, output_dim):
     model = keras.Sequential([
-        layers.Dense(64, activation='relu', input_shape=(input_dim,)),
-        layers.Dense(32, activation='relu'),
+        layers.Dense(512, activation='relu', input_shape=(input_dim,)),
+        layers.Dense(512, activation='relu'),
+        layers.Dense(256, activation='relu'),
         layers.Dense(output_dim, activation='linear')
     ])
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipvalue=1.0), loss='huber')
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.00025, clipvalue=1.0), loss='huber')
     return model
 ```
+
+#### `train_step(model, states, targets, actions)` (Optimización CUDA)
+
+Utiliza el decorador `@tf.function`, lo que instruye a TensorFlow para compilar esta función en un **Grafo Computacional Estático**.
+
+- En lugar de ejecutar operaciones de Python una por una, TensorFlow optimiza todo el bloque de cálculo y lo ejecuta directamente en la GPU (CUDA). Esto reduce drásticamente el tiempo de entrenamiento por paso.
+
+```python
+@tf.function
+def train_step(model, states, targets, actions):
+    with tf.GradientTape() as tape:
+        q_values = model(states, training=True)
+        indices = tf.stack([tf.range(tf.shape(actions)[0]), actions], axis=1)
+        chosen_q = tf.gather_nd(q_values, indices)
+        loss = tf.keras.losses.Huber()(targets, chosen_q)
+
+    grads = tape.gradient(loss, model.trainable_variables)
+    model.optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    return loss
+```
+
+**Lógica:**
+
+1. Realiza una pasada hacia adelante (`model(states)`) para obtener los valores Q.
+2. Usa `tf.gather_nd` para seleccionar solo los valores Q de las acciones que el agente realmente tomó.
+3. Calcula la pérdida (Huber Loss) y los gradientes (`tape.gradient`).
+4. Aplica los gradientes para actualizar los pesos de la red.
 
 #### `ReplayBuffer` (Clase)
 
@@ -306,7 +435,7 @@ class DQNAgent:
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
-        self.batch_size = 32
+        self.batch_size = 256
         self.buffer = ReplayBuffer()
         self.model = build_model(state_dim, action_dim)
         self.target_model = build_model(state_dim, action_dim)
@@ -334,15 +463,18 @@ Decide qué acción tomar usando la política "Epsilon-Greedy".
 
 #### `learn(self)`
 
-El núcleo del aprendizaje (actualización de la red neuronal).
+El núcleo del aprendizaje ha sido reescrito para aprovechar la aceleración por GPU mediante operaciones vectorizadas y grafos estáticos.
 
-1.  `if len(self.buffer) < self.batch_size`: No aprende si el buffer no tiene suficientes muestras.
-2.  `batch = self.buffer.sample(...)`: Toma un lote de experiencias pasadas.
-3.  `q_next = self.target_model.predict(...)`: Usa la red **target** (la estable) para predecir el valor Q máximo del _siguiente_ estado.
-4.  `targets = rewards + self.gamma * q_next_max * (1 - dones)`: Calcula el valor Q "objetivo" (Target Q) usando la ecuación de Bellman. Si el episodio terminó (`dones=True`), el objetivo es solo la recompensa.
-5.  `q_current = self.model.predict(...)`: Obtiene las predicciones actuales de la red **principal**.
-6.  `q_current[i, actions[i]] = targets[i]`: Modifica los valores Q actuales: solo actualiza el valor Q de la acción que _realmente se tomó_ con el "target" calculado. Los Q de las otras acciones se dejan como estaban.
-7.  `self.model.fit(states, q_current, ...)`: Entrena la red **principal** para que sus salidas (`q_current` predichos) se parezcan más a los `targets` calculados.
+1.  `if len(self.buffer) < self.batch_size`: Verifica si hay suficientes experiencias para entrenar; si no, retorna.
+2.  `batch = self.buffer.sample(...)`: Obtiene un lote aleatorio de experiencias `(estado, acción, recompensa,...)` para romper la correlación temporal.
+3.  **Conversión a Tensores (`tf.convert_to_tensor`)**: Este es un paso crucial para el rendimiento. Convierte las listas de Python (CPU) en **Tensores de TensorFlow** (GPU).
+    - `states`, `rewards`, etc., se transforman a `tf.float32` o `tf.int32`. Esto mueve los datos a la memoria de la tarjeta gráfica para su procesamiento paralelo.
+4.  `q_next = self.target_model(next_states, training=False)`: Obtiene los Q-values del siguiente estado.
+    - **Nota:** Se llama al modelo directamente `self.target_model(...)` en lugar de usar `.predict()`. Esto evita la sobrecarga (overhead) de Keras y es mucho más rápido dentro de un bucle de entrenamiento personalizado.
+5.  `targets = rewards + ...`: Calcula el "Valor Objetivo" usando la **Ecuación de Bellman**.
+    - Utiliza operaciones vectorizadas de TensorFlow (`tf.reduce_max`, suma y multiplicación de tensores) para calcular el objetivo de los 256 ejemplos del lote simultáneamente.
+6.  `loss = train_step(self.model, states, targets, actions)`: **Optimización Compilada**.
+    - En lugar de usar el lento método `.fit()`, se invoca la función personalizada `train_step` (decorada con `@tf.function`). Esta función ejecuta el cálculo de la pérdida, la derivación de gradientes y la actualización de pesos todo en un único paso optimizado en la GPU.
 
 ```python
     def learn(self):
@@ -350,30 +482,16 @@ El núcleo del aprendizaje (actualización de la red neuronal).
             return None
         batch = self.buffer.sample(self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
-        states = np.array(states)
-        actions = np.array(actions)
-        rewards = np.array(rewards)
-        next_states = np.array(next_states)
-        dones = np.array(dones)
-
-        # 1. Calcular el valor Q máximo del siguiente estado usando la RED TARGET
-        q_next = self.target_model.predict(next_states, verbose=0)
-        q_next_max = np.max(q_next, axis=1)
-
-        # 2. Calcular el Q-Target (Ecuación de Bellman)
-        targets = rewards + self.gamma * q_next_max * (1 - dones)
-
-        # 3. Obtener los Q actuales de la RED PRINCIPAL
-        q_current = self.model.predict(states, verbose=0)
-
-        # 4. Actualizar solo el Q-valor de la acción tomada
-        for i in range(self.batch_size):
-            q_current[i, actions[i]] = targets[i]
-
-        # 5. Entrenar la RED PRINCIPAL
-        history = self.model.fit(states, q_current, epochs=1, verbose=0)
-        loss = history.history['loss'][0]
-        return loss
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        next_states = tf.convert_to_tensor(next_states, dtype=tf.float32)
+        rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
+        actions = tf.convert_to_tensor(actions, dtype=tf.int32)
+        dones = tf.convert_to_tensor(dones, dtype=tf.float32)
+        q_next = self.target_model(next_states, training=False)
+        q_next_max = tf.reduce_max(q_next, axis=1)
+        targets = rewards + self.gamma * q_next_max * (1.0 - dones)
+        loss = train_step(self.model, states, targets, actions)
+        return float(loss)
 ```
 
 #### `save_state(self)` y `load_state(self)`
@@ -420,11 +538,13 @@ Este es el script principal que se ejecuta en Webots para entrenar al agente.
 
 #### Inicialización y Carga de "Mejor Modelo"
 
-Configura el entorno y el agente. También carga las métricas del mejor modelo guardado anteriormente para saber si el agente supera su propio récord.
+Configura el entorno y el agente. Además, intenta cargar las métricas del mejor modelo previo. El código es robusto: verifica si el archivo de métricas tiene el formato nuevo (3 valores: tiempo, recompensa, loss) o el antiguo (2 valores), y maneja casos de corrupción reiniciando los contadores.
 
 - `supervisor = Supervisor()`: Obtiene el controlador de Webots.
+
 - `env = EPuckEnv(...)` y `agent = DQNAgent(...)`: Crea los objetos del entorno y el agente.
-- `if os.path.exists(BEST_METRICS_FILE): ...`: Comprueba si existe un récord anterior (`.npy`) y carga los mejores pasos, recompensa y pérdida (`BEST_STEPS`, `BEST_REWARD`, `BEST_AVG_LOSS`).
+
+- `if os.path.exists(BEST_METRICS_FILE)`: ...: Carga el récord histórico. Si el archivo existe, extrae `BEST_TIME`, `BEST_REWARD` y `BEST_AVG_LOSS`.
 
 ```python
 supervisor = Supervisor()
@@ -443,12 +563,25 @@ BEST_METRICS_FILE = 'dqn_best_metrics.npy'
 if os.path.exists(BEST_METRICS_FILE):
     print("Cargando métricas del mejor modelo...")
     metrics = np.load(BEST_METRICS_FILE)
-    BEST_STEPS = metrics[0]
-    BEST_REWARD = metrics[1]
-    BEST_AVG_LOSS = metrics[2]
+    if len(metrics) == 3:
+        BEST_TIME = metrics[0]
+        BEST_REWARD = metrics[1]
+        BEST_AVG_LOSS = metrics[2]
+    elif len(metrics) == 2:
+        print("Detectado archivo de métricas antiguo (2 valores). Actualizando a 3.")
+        BEST_TIME = np.inf
+        BEST_REWARD = metrics[0]
+        BEST_AVG_LOSS = metrics[1]
+    else:
+        print("Error: Archivo de métricas corrupto. Empezando de cero.")
+        BEST_TIME = np.inf
+        BEST_REWARD = -np.inf
+        BEST_AVG_LOSS = np.inf
+    print(f"Mejor Tiempo cargado: {BEST_TIME:.2f} segundos")
+    print(f"Mejor Recompensa cargada: {BEST_REWARD:.2f}")
 else:
     print("No se encontraron métricas. Empezando 'Mejor Modelo' de cero.")
-    BEST_STEPS = np.inf
+    BEST_TIME = np.inf
     BEST_REWARD = -np.inf
     BEST_AVG_LOSS = np.inf
 ```
@@ -459,16 +592,21 @@ Este es el bucle que se ejecuta en cada paso de la simulación.
 
 - `action = agent.choose_action(state)`: Elige una acción (Exploración o Explotación).
 - `env.apply_action(action)`: Ejecuta la acción en el robot.
-- `next_state = env.get_state()`: Observa el nuevo estado (lectura de sensores).
-- `reward, done = env.get_reward_and_done(...)`: Obtiene la recompensa y si el episodio terminó.
-- `agent.store_transition(...)`: Guarda la experiencia en el Replay Buffer.
-- `loss = agent.learn()`: Ejecuta un paso de aprendizaje (si el buffer está listo).
+- `loss = agent.learn()`: Ejecuta un paso de aprendizaje y guarda la pérdida en episode_losses.
+- **Monitoreo**: Cada 20 pasos, imprime en consola la recompensa acumulada y el loss actual para seguimiento en tiempo real.
 - `agent.update_target_model()`: Cada `UPDATE_TARGET_EVERY` pasos, actualiza la red "target".
 
 ```python
+
 agent.load_state()
 print(f"--- Iniciando Episodio (Epsilon actual: {agent.epsilon:.3f}) ---")
+print(f"--- Tamaño del Buffer: {len(agent.buffer)} ---")
+start_time = time.time()
+supervisor.step(TIME_STEP)
 state = env.get_state()
+total_reward = 0
+step_counter = 0
+episode_losses = []
 
 while supervisor.step(TIME_STEP) != -1:
     action = agent.choose_action(state)
@@ -476,19 +614,16 @@ while supervisor.step(TIME_STEP) != -1:
     next_state = env.get_state()
     reward, done = env.get_reward_and_done(action, state)
     total_reward += reward
-
     agent.store_transition(state, action, reward, next_state, done)
     loss = agent.learn()
-
     if loss is not None:
         episode_losses.append(loss)
-
+        if step_counter % 20 == 0:
+            print(f"Paso {step_counter}, Recompensa: {total_reward:.2f}, Loss actual: {loss:.4f}")
     state = next_state
     step_counter += 1
-
     if step_counter % UPDATE_TARGET_EVERY == 0:
         agent.update_target_model()
-
     if done or step_counter > MAX_STEPS_PER_EPISODE:
 ```
 
@@ -496,41 +631,44 @@ while supervisor.step(TIME_STEP) != -1:
 
 Esta sección se ejecuta cuando el robot llega a la meta (`done=True`) o se acaba el tiempo (`MAX_STEPS_PER_EPISODE`).
 
-- Calcula la duración y la pérdida (loss) promedio del episodio.
-- Escribe los resultados en los archivos de log (`LOG_FILE`, `METRICS_LOG_FILE`).
-- `agent.decay_epsilon()`: Reduce epsilon para el próximo episodio.
-- `agent.save_state()`: Guarda el progreso actual (para poder reanudar).
-- **Lógica del "Mejor Modelo"**:
-  - Comprueba si el episodio fue exitoso (`reason == "Meta"`) y si superó el récord anterior (menos pasos, o igual pasos con más recompensa, o igual todo con menos loss).
-  - Si es un nuevo récord, guarda los pesos del modelo en `BEST_MODEL_FILE` (`dqn_best_model.h5`) y actualiza las métricas en `BEST_METRICS_FILE`.
-- `supervisor.worldReload()`: Reinicia la simulación para el próximo episodio.
-- `if agent.epsilon <= agent.epsilon_min: break`: Si epsilon llega a su mínimo, el entrenamiento termina.
+- **Cálculo de Tiempo**: Calcula la duración exacta del episodio (`duration_sec`) y la formatea para los logs.
+- **Logs**: Escribe el resultado (Meta/Fracaso), recompensa y duración en los archivos de texto (`LOG_FILE` y `METRICS_LOG_FILE`).
+- **Lógica del "Mejor Modelo":**
+  - El criterio principal ahora es la Velocidad.
+  - Comprueba si el robot llegó a la meta (`reason == "Meta"`) y si el tiempo fue menor al récord anterior (`duration_sec < BEST_TIME`).
+  - Si es un nuevo récord, guarda los pesos del modelo y actualiza el archivo `.npy` con el nuevo mejor tiempo, recompensa y pérdida.
+- **Reinicio:** Si no se ha alcanzado el epsilon mínimo, recarga el mundo (`supervisor.worldReload()`) para el siguiente episodio.
 
 ```python
     if done or step_counter > MAX_STEPS_PER_EPISODE:
-        try:
-            avg_loss = np.mean(episode_losses) if episode_losses else 0
-        except Exception as e:
-            print(f"Error al escribir en el log: {e}")
+        end_time = time.time()
+        duration_sec = end_time - start_time
+
+        if done:
+            print(f"¡META ALCANZADA! Pasos: {step_counter}, Recompensa Final: {total_reward:.2f}")
+        else:
+            print(f"¡TIEMPO LÍMITE! Pasos: {step_counter}, Recompensa Final: {total_reward:.2f}")
 
         agent.decay_epsilon()
         agent.save_state()
-        if (reason == "Meta" and
-            (step_counter < BEST_STEPS or
-             (step_counter == BEST_STEPS and total_reward > BEST_REWARD) or
-             (step_counter == BEST_STEPS and total_reward == BEST_REWARD and avg_loss < BEST_AVG_LOSS))):
 
-            print("\n--- ¡NUEVO MEJOR MODELO ENCONTRADO! ---")
-            BEST_STEPS = step_counter
+        if reason == "Meta" and duration_sec < BEST_TIME:
+            print("\n--- ¡NUEVO RÉCORD DE VELOCIDAD! ---")
+            print(f"Tiempo: {duration_sec:.2f}s (Récord anterior: {BEST_TIME:.2f}s)")
+
+            BEST_TIME = duration_sec
             BEST_REWARD = total_reward
             BEST_AVG_LOSS = avg_loss
+
             agent.model.save_weights(BEST_MODEL_FILE)
-            metrics_to_save = np.array([BEST_STEPS, BEST_REWARD, BEST_AVG_LOSS])
+            metrics_to_save = np.array([BEST_TIME, BEST_REWARD, BEST_AVG_LOSS])
             np.save(BEST_METRICS_FILE, metrics_to_save)
+            print("Métricas actualizadas.\n")
         else:
-            print("Info: No es un nuevo 'Mejor Modelo'.")
+            print("Info: No es un nuevo récord.")
+
         if agent.epsilon <= agent.epsilon_min:
-            print("--- ENTRENAMIENTO COMPLETADO (Epsilon Mínimo alcanzado) ---")
+            print("--- ENTRENAMIENTO COMPLETADO ---")
             break
         else:
             print("--- Reiniciando para el próximo episodio... ---")
@@ -616,55 +754,44 @@ while supervisor.step(TIME_STEP) != -1:
 
 ## Resultados
 
-El entrenamiento evidenció de manera clara la progresión del agente DQN desde un estado inicial de desconocimiento total hasta el desarrollo de una política capaz de resolver exitosamente el laberinto. Este proceso pudo dividirse en tres fases principales.
+El entrenamiento actual, que abarca 160 episodios, muestra una clara transición desde el desconocimiento total hasta la consecución de las primeras políticas exitosas. A diferencia del ejemplo anterior, este agente ha logrado éxitos significativos (como recompensas positivas) en una etapa más temprana del entrenamiento (Episodio 144), aunque todavía se encuentra en una fase activa de aprendizaje con un Epsilon medio (~0.45).
 
-### 1. Fase de Exploración Pura (Episodios ~1–90)
+### 1. Fase de Exploración y Fracaso (Episodios ~1–49)
 
-- **Comportamiento:** En esta etapa inicial, el valor de _Epsilon_ fue elevado (iniciando en 1.0), lo que implicó que el agente ejecutara acciones casi completamente aleatorias.
-- **Resultados:** La mayoría de los episodios concluyeron en _fracaso_, alcanzando el límite máximo de 1001 pasos. Las recompensas obtenidas fueron altamente negativas (por ejemplo, –602.80, –618.40, –946.60), ya que el robot colisionaba repetidamente o realizaba acciones ineficientes.
-- **Primer éxito:** En el episodio 5, el agente alcanzó la _Meta_ por azar, tras 797 pasos, manteniendo aún una recompensa negativa (–381.20).
-- **Pérdida (_Loss_):** Tal como se observó en el gráfico correspondiente, el valor promedio de pérdida (_Avg Loss_) inició bajo y aumentó durante esta fase. Al comienzo, la red no poseía conocimiento alguno, por lo que su error era reducido; sin embargo, conforme exploraba y recibía recompensas (mayoritariamente negativas), sus predicciones se tornaron incorrectas, incrementando así el error total.
+- **Comportamiento:** Con Epsilon iniciando en 1.0 y descendiendo lentamente, el agente actuó de manera aleatoria.
+- **Resultados:** Todos los episodios en esta fase resultaron en Fracaso, agotando el tiempo límite (1001 pasos). Las recompensas fueron consistentemente negativas (ej. -696.80, -922.00), indicando que el robot no encontraba la meta y sufría penalizaciones constantes.
+- **Pérdida (_Loss_):** El error de la red comenzó muy bajo (0.019) y aumentó progresivamente a medida que el agente comenzaba a descubrir que sus acciones aleatorias tenían consecuencias negativas.
 
-### 2. Fase de Aprendizaje y Explotación (Episodios ~90–300)
+### 2. Fase de Descubrimiento (Episodios 50–140)
 
-- **Comportamiento:** En esta fase, _Epsilon_ disminuyó progresivamente (aproximadamente entre 0.6 y 0.2), lo que permitió al agente comenzar a explotar lo aprendido, combinando la exploración con decisiones más informadas.
-- **Resultados:** Se observó un incremento notable en los episodios exitosos (_Meta_).
-- En el **episodio 100** (_Epsilon_ = 0.5878), el agente resolvió el laberinto en 191 pasos, evidenciando un aprendizaje significativo.
-- En el **episodio 170** (_Epsilon_ = 0.4395), alcanzó su primera recompensa positiva (29.00), lo que indicó que las recompensas por avanzar superaron las penalizaciones por colisión o giros innecesarios.
-- Los gráficos reflejaron claramente esta evolución: la _Recompensa Total_ mostró una tendencia ascendente, abandonando los valores negativos extremos, mientras que la _Pérdida Promedio_ alcanzó su punto máximo y luego comenzó a estabilizarse, reflejando predicciones más precisas por parte de la red neuronal.
+- **El Primer Éxito:** En el **Episodio 50** (Epsilon = 0.7822), se produjo un punto de inflexión: el agente encontró la **Meta** por primera vez tras 687 pasos. Aunque la recompensa fue negativa (-620.50), este evento marcó el inicio del aprendizaje real.
+- **Inestabilidad:** A partir de aquí, el agente comenzó a alternar entre éxitos esporádicos y fracasos. En el **Episodio 82**, logró llegar a la meta en solo **353 pasos** (el tiempo más rápido registrado hasta el momento), aunque la recompensa seguía siendo negativa (-115.80) debido a colisiones o movimientos ineficientes.
 
-### 3. Fase de Convergencia (Episodios ~300 en adelante)
+### 3. Fase de Refinamiento y Recompensa Positiva (Episodios 140–160)
 
-- **Comportamiento:** En esta etapa final, _Epsilon_ se mantuvo bajo (menor a 0.2), por lo que el agente actuó principalmente de manera _greedy_, seleccionando las acciones que consideraba óptimas.
-- **Resultados:** El agente resolvió el laberinto de forma consistente, reduciéndose considerablemente los episodios de _fracaso_.
-- En el **episodio 275**, alcanzó la recompensa positiva más alta (35.30).
-- En el **episodio 373**, logró su mejor tiempo (190 pasos).
-- Finalmente, el **entrenamiento concluyó en el episodio 470** (_Epsilon_ = 0.0897), alcanzando la _Meta_ en 210 pasos con una recompensa de 17.70, consolidando un desempeño estable.
-- La media móvil de la recompensa se estabilizó en valores positivos, mientras que la media móvil de la pérdida descendió y permaneció en niveles bajos, evidenciando la convergencia del modelo y la estabilidad de sus predicciones.
+- **Comportamiento:** Con Epsilon rondando el valor de 0.48, el agente comenzó a explotar mejor su conocimiento.
+- **Hito Principal:** En el **Episodio 144**, el agente logró su **primera recompensa positiva (16.70)**. Esto es crucial, ya que indica que encontró un camino hacia la meta lo suficientemente limpio y rápido como para superar las penalizaciones acumuladas.
+- **Estado Actual:** El entrenamiento finalizó en el episodio 160. Aunque todavía hay variabilidad, la tendencia muestra que el agente es capaz de replicar el éxito con mayor frecuencia.
 
-| Episodio | Epsilon | Pasos | Resultado | Recompensa Total | Hito Significativo                           |
-| -------- | ------- | ----- | --------- | ---------------- | -------------------------------------------- |
-| 1        | 1.0000  | 1001  | Fracaso   | -602.80          | Inicio del entrenamiento (exploración pura)  |
-| 5        | 0.9801  | 797   | Meta      | -381.20          | Primera vez que alcanza la "Meta" (por azar) |
-| 100      | 0.5878  | 191   | Meta      | -105.50          | Primer éxito rápido (aprendizaje evidente)   |
-| 170      | 0.4395  | 633   | Meta      | 29.00            | Primera recompensa positiva                  |
-| 275      | 0.1865  | 887   | Meta      | 35.30            | Recompensa positiva más alta                 |
-| 373      | 0.1243  | 190   | Meta      | 16.50            | Episodio más rápido (menor número de pasos)  |
-| 470      | 0.0897  | 210   | Meta      | 17.70            | Último episodio (éxito consistente)          |
+| Episodio | Epsilon | Pasos | Resultado | Recompensa Total | Hito Significativo                         |
+| -------- | ------- | ----- | --------- | ---------------- | ------------------------------------------ |
+| 1        | 1.0000  | 1001  | Fracaso   | -289.00          | Inicio del entrenamiento                   |
+| 50       | 0.7822  | 687   | Meta      | -620.50          | Primera vez que alcanza la Meta            |
+| 82       | 0.6663  | 353   | Meta      | -115.80          | Episodio más rápido (menor n° pasos)       |
+| 144      | 0.4883  | 408   | Meta      | 16.70            | Primera Recompensa Positiva / Mejor Récord |
+| 160      | 0.4507  | 796   | Meta      | -193.60          | Último episodio registrado                 |
 
 ### Gráficos
 
 1. **Recompensa total por episodio**
-   Se representó la recompensa acumulada al final de cada episodio. La línea roja (media móvil) mostró la tendencia general, evidenciando el tránsito desde recompensas muy negativas hacia valores positivos y estables conforme el agente aprendía.
+   La gráfica muestra cómo el agente sale de la zona de "recompensas profundas" (cerca de -900) para estabilizarse alrededor de -200/-400, logrando finalmente romper la barrera del cero en el episodio 144.
 
    ![](.docs/Recompensa_Total_por_Episodio_con_Media_Movil.png)
 
 2. **Pérdida (_Loss_) promedio por episodio**
-   Se ilustró el error promedio de la red neuronal por episodio. La línea azul (media móvil) mostró la evolución del error: éste aumentó durante la fase de exploración inicial y posteriormente disminuyó hasta estabilizarse, reflejando la convergencia del modelo y la precisión de sus predicciones.
+   La pérdida muestra el comportamiento clásico de aprendizaje: un aumento inicial mientras el agente descubre la complejidad del entorno, seguido de oscilaciones mientras ajusta su política (Q-values) para maximizar la recompensa futura.
 
    ![](.docs/Perdida_Loss_Promedio_por_Episodio_con_Media_Movil.png)
-
-![alt text](.docs/best.gif)
 
 ## Ejecución del Proyecto en Webots
 
@@ -674,6 +801,8 @@ Para ejecutar este proyecto en **Webots**, sigue estos pasos:
 
    ```bash
    git clone https://github.com/ShinjiMC/webots-deep-q-network.git
+   cd webots-deep-q-network
+   git checkout cuda
    ```
 
 2. **Abre Webots** y selecciona:
@@ -706,6 +835,10 @@ Para ejecutar este proyecto en **Webots**, sigue estos pasos:
    - Verifica el nombre exacto del archivo `.h5` generado durante el entrenamiento (por ejemplo, `model_dqn_final.h5`).
    - Abre el archivo `eval.py`, reemplaza el nombre del modelo en el código por el nombre correcto del archivo `.h5`, y cambia el nombre del script de `eval.py` a `dqn.py`.
    - Finalmente, ejecuta nuevamente la simulación. El robot utilizará el modelo entrenado y llegará consistentemente a la meta sin requerir aprendizaje adicional.
+
+![alt text](.docs/gpu_terminal.png)
+
+![alt text](.docs/result.gif)
 
 ---
 
